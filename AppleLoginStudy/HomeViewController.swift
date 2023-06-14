@@ -34,7 +34,7 @@ final class HomeViewController: UIViewController {
         return Observable.just(emailString)
     }
     private let isWithdrawalAllowed = PublishSubject<Bool>()
-    private let authorizationCode = BehaviorSubject<String>(value: "")
+    private let authorizationCode = PublishSubject<String>()
     
     //MARK: - Life cycle
     
@@ -86,20 +86,32 @@ final class HomeViewController: UIViewController {
          */
         
         self.withdrawalButton.rx.tap
-            .observe(on: ConcurrentDispatchQueueScheduler(qos: .default))
-            .flatMapFirst { self.requestAuthorization() }
-            .distinctUntilChanged()
-            .flatMapFirst { _ in self.authorizationCode.asObservable() }
-            .map { AuthorizationService.shared.getAppleRefreshToken(code: $0) }
-            .flatMapFirst { AuthorizationService.shared.decodedData.asObservable() }
-            .map { ($0?.refresh_token ?? "") as String }
-            .flatMapFirst { Observable.just( (AuthorizationService.shared.createJWT(), $0) ) }
-            .map { AuthorizationService.shared.revokeAppleToken(clientSecret: $0.0, token: $0.1) }
-            .flatMapFirst { AuthorizationService.shared.isAppleTokenRevoked.asObservable() }
-            .filter { $0 == true }
-            .delay(.milliseconds(700), scheduler: MainScheduler.instance)
-            .observe(on: MainScheduler.instance)
             .debug("withdrawalButton")
+            .observe(on: ConcurrentDispatchQueueScheduler(qos: .default))
+            .flatMap { self.requestAuthorization() }
+            .distinctUntilChanged()
+            .flatMap { _ in self.authorizationCode }
+            .filter { $0 != "" }
+            .map { AuthorizationService.shared.getAppleRefreshToken(code: $0) }
+            .flatMap { _ -> Observable<AppleTokenResponse?> in
+                print("00000")
+                return AuthorizationService.shared.decodedData }
+            .map { ($0?.refresh_token ?? "") as String }
+            .flatMap { refreshToken -> Observable<(String, String)> in
+                print("11111")
+                return Observable.just( (AuthorizationService.shared.createJWT(), refreshToken) ) }
+            .map { AuthorizationService.shared.revokeAppleToken(clientSecret: $0.0, token: $0.1) }
+            .flatMap { _ -> Observable<Bool> in
+                print("22222")
+                return AuthorizationService.shared.isAppleTokenRevoked }
+            .distinctUntilChanged()
+            .flatMap { _ -> Observable<Bool> in
+                print("33333")
+                return AuthorizationService.shared.isAppleTokenRevoked
+            }
+            .filter { $0 == true }
+            .delay(.milliseconds(500), scheduler: MainScheduler.instance)
+            .observe(on: MainScheduler.instance)
             .subscribe(onNext: { [weak self] _ in
                 guard let self = self else { return }
                 self.activityIndicator.stopAnimating()

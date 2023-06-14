@@ -54,7 +54,7 @@ final class LoginViewController: UIViewController {
          (5) When the authorization has completed, true is emitted.
              In other words, element has been changed and continue returning an observable of true.
          (6) Check whether the element is true or not.
-         (7) If sign-in is allowed, wait for 0.7 seconds. (this code is optional)
+         (7) If sign-in is allowed, wait for 0.5 seconds. (this code is optional)
          (8) Make sure that main scheduler is required for UI updates.
          (9) Stop activity indicator and go to the HomeViewController.
          */
@@ -66,7 +66,7 @@ final class LoginViewController: UIViewController {
             .distinctUntilChanged()                                        // (4)
             .flatMap { _ in self.isSignInAllowed }                         // (5)
             .filter { $0 == true }                                         // (6)
-            .delay(.milliseconds(700), scheduler: MainScheduler.instance)  // (7)
+            .delay(.milliseconds(500), scheduler: MainScheduler.instance)  // (7)
             .observe(on: MainScheduler.instance)                         // (8)
             .subscribe(onNext: { [weak self] _ in                          // (9)
                 guard let self = self else { return }
