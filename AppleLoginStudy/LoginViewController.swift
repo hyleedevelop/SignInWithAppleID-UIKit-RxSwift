@@ -152,7 +152,6 @@ extension LoginViewController: ASAuthorizationControllerDelegate {
            let authCodeString = String(data: authorizationCode, encoding: .utf8),
            let identifyTokenString = String(data: identityToken, encoding: .utf8) {
             let code = String(decoding: authorizationCode, as: UTF8.self)
-            UserDefaults.standard.setValue(code, forKey: Constant.UserDefaults.authorizationCode)
             print(authorizationCode)
             print(identityToken)
             print(authCodeString)

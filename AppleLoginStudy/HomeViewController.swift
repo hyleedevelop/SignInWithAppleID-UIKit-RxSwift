@@ -46,7 +46,7 @@ final class HomeViewController: UIViewController {
         self.setupMembershipWithdrawalProcess()
     }
     
-    //MARK: - Main process
+    //MARK: - Method used in the main process
     
     private func setupLabel() {
         // Bind user name.
@@ -65,33 +65,24 @@ final class HomeViewController: UIViewController {
         self.withdrawalButton.layer.cornerRadius = 5
         self.withdrawalButton.clipsToBounds = true
         
-        // Refer to the Main.storyboard for other settings.
+        // See Main.storyboard for other settings.
     }
     
+    // This is a method implemented using RxSwift to handle the membership withdrawal process.
     private func setupMembershipWithdrawalProcess() {
         /*
-         (1) 버튼이 눌리는 것을 관찰합니다.
-         (2)
-         (3)
-         (4)
-         (5)
-         (6)
-         (7) clientService와 refreshToken의 Observable 전달
-         (8) 위에서 전달받은 두 값을 파라미터로 사용해 revokeAppleToken 함수 실행
-         (9)
-         (10) Check whether the element is true or not.
-         (11) If apple token has been successfully revoked, wait for 0.7 seconds. (this code is optional)
-         (12) Make sure that main scheduler is required for UI updates.
-         (13) Stop activity indicator and go to the LoginViewController.
+         ------------------------------------------------------------------------------------------
+         ✅ Each step waits for the completion of the previous step before executing.
+         ✅ "flatMap" does not guarantee the order of event emission from the sequence,
+             whereas "concatMap" ensures the order of event emission.
+         ✅ In this code, "concatMap" is used to chain observables sequentially.
+         ------------------------------------------------------------------------------------------
          */
-        
-        // ⭐️ Each step waits for the completion of the previous step before executing.
-        // ⭐️ "flatMap" does not guarantee the order of event emission from the sequence,
-        //    whereas "concatMap" ensures the order of event emission.
+         
         self.withdrawalButton.rx.tap.asObservable()  // tap event -> Observable<Void>
         
-        // Step 1: Request authorization.
-            .concatMap { _ -> Observable<Void> in
+        // Step 1: Request authorization to API server.
+            .concatMap { Void -> Observable<Void> in
                 return Observable.create { observer in
                     self.requestAuthorization()
                     observer.onNext(())
@@ -100,8 +91,9 @@ final class HomeViewController: UIViewController {
                 }  // Observable<Void> -> Observable<Void>
             }
 
-        // Step 2: Get Apple refresh token.
-            .concatMap { _ -> Observable<String> in
+        // Step 2: If step 1 has successfully done, we can get the authorization code,
+        //         which is then used to call the method for obtaining the Apple refresh token.
+            .concatMap { Void -> Observable<String> in
                 return self.authorizationCode.asObservable()  // Observable<String>
                     .filter { !$0.isEmpty }  // Observable<String> -> Observable<String>
                     .flatMap { authorizationCode -> Observable<String> in
@@ -109,21 +101,23 @@ final class HomeViewController: UIViewController {
                     }  // Observable<String> -> Observable<String>
             }
         
-        // Step 3: ...
+        // Step 3: If step 2 has successfully done, we receive some response data from Apple ID server.
+        //         Then, we need to decode it to get Apple refresh token which is necessary for revoking the Apple token.
+        //         If both client secret and refresh token are ready, we will request revocation of the token.
             .concatMap { clientSecret -> Observable<Void> in
                 let clientSecret = Observable.just(clientSecret)  // Observable<String>
-                let refreshToken = AuthorizationService.shared.decodedData.asObservable()  // Observable<AppleTokenResponse?>
+                let refreshToken = AuthorizationService.shared.decodedData.asObservable()
                     .flatMap { decoddedData -> Observable<String> in
                         return Observable.just((decoddedData?.refresh_token ?? "") as String)
-                    }  // Observable<String> -> Observable<String>
+                    }  // Observable<AppleTokenResponse?> -> Observable<String>
                 
                 return Observable
                     .zip(clientSecret, refreshToken)  // Observable<String>, Observable<String> -> Observable<String>, Observable<String>
                     .map { AuthorizationService.shared.revokeAppleToken(clientSecret: $0, token: $1) }  // Observable<String>, Observable<String> -> Observable<Void>
             }
         
-        // Step 4: ...
-            .concatMap { _ -> Observable<Void> in
+        // Step 4: If step 3 has successfully done, let's go to step 5.
+            .concatMap { Void -> Observable<Void> in
                 return AuthorizationService.shared.isAppleTokenRevoked.asObservable()  // Observable<Bool>
                     .filter { $0 == true }  // Observable<Bool> -> Observable<Bool>
                     .flatMap { _ -> Observable<Void> in
@@ -135,15 +129,16 @@ final class HomeViewController: UIViewController {
                     }  // Observable<Bool> -> Observable<Void>
             }
         
-        // Step 5: ...
+        // Step 5: Show the animating activity indicator to the user and go back to the LoginViewController.
             .delay(.milliseconds(500), scheduler: MainScheduler.instance)
             .observe(on: MainScheduler.instance)
             .subscribe(onNext: {
                 self.activityIndicator.stopAnimating()
                 self.goToLoginViewController()
-                print("Memberwhip withdrawal completed!")
+                print("Membership withdrawal completed!")
             })
             .disposed(by: rx.disposeBag)
+        
     }
 
     //MARK: - Method used in the main process
@@ -165,7 +160,7 @@ final class HomeViewController: UIViewController {
         return Observable.just("")
     }
     
-    // If login process has successfully done, let's go to the HomeViewController
+    // If login process has successfully done, let's go to the HomeViewController.
     private func goToLoginViewController() {
         self.performSegue(withIdentifier: "ToLoginViewController", sender: self)
     }
@@ -180,14 +175,12 @@ extension HomeViewController: ASAuthorizationControllerDelegate {
     func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
         self.activityIndicator.startAnimating()
         
-        // 인증 성공 이후 제공되는 정보
+        // The information provided after successful authentication
         guard let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential else { return }
         
-        // 회원탈퇴가 허용되었을 경우 true 이벤트 방출
-        // ⭐️ authorizationCode는 일회용이고 인증 후 5분간만 유효함
+        // ⭐️ The authorization code is disposable and valid for only 5 minutes after authentication.
         if let authorizationCode = appleIDCredential.authorizationCode {
             let code = String(decoding: authorizationCode, as: UTF8.self)
-            UserDefaults.standard.setValue(code, forKey: Constant.UserDefaults.authorizationCode)
             self.authorizationCode.onNext(code)
         }
     }

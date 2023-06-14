@@ -154,7 +154,7 @@ final class AuthorizationService {
     func getAppleRefreshToken(code: String) -> Observable<String> {
         guard let secret = UserDefaults.standard.string(forKey: Constant.UserDefaults.clientSecret) else {
             return Observable.just("")
-        }  // << 앱 설치 후 최초 회원탈퇴 시도하면 return 되어버림... 왜?
+        }
         
         let url = "https://appleid.apple.com/auth/token?" +
                   "client_id=\(Constant.App.appBundleID)&" +
