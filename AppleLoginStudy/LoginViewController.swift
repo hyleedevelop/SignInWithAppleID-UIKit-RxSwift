@@ -61,7 +61,7 @@ final class LoginViewController: UIViewController {
         
         self.signInButton.rx.tapGesture()                                  // (1)
             .when(.recognized)                                             // (2)
-            .observe(on: ConcurrentDispatchQueueScheduler(qos: .default))
+//            .observe(on: ConcurrentDispatchQueueScheduler(qos: .default))
             .flatMap { _ in self.requestAuthorization() }                  // (3)
             .distinctUntilChanged()                                        // (4)
             .flatMap { _ in self.isSignInAllowed }                         // (5)
@@ -164,8 +164,8 @@ extension LoginViewController: ASAuthorizationControllerDelegate {
             .getCredentialState(forUserID: userIdentifier) { credentialState, error in
                 switch credentialState {
                 case .authorized:
-                    // If sign-in is allowed, emit true element.
-                    self.isSignInAllowed.onNext(true)
+                    AuthorizationService.shared.createJWT()  // Save client secret (JWT) in UserDefaults.
+                    self.isSignInAllowed.onNext(true)  // If sign-in is allowed, emit true element.
                     print("credentialState: authorized")
                     
                 case .revoked:

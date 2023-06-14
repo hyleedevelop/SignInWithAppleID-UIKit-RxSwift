@@ -85,37 +85,63 @@ final class HomeViewController: UIViewController {
          (13) Stop activity indicator and go to the LoginViewController.
          */
         
-        self.withdrawalButton.rx.tap
-            .debug("withdrawalButton")
-            .observe(on: ConcurrentDispatchQueueScheduler(qos: .default))
-            .flatMap { self.requestAuthorization() }
-            .distinctUntilChanged()
-            .flatMap { _ in self.authorizationCode }
-            .filter { $0 != "" }
-            .map { AuthorizationService.shared.getAppleRefreshToken(code: $0) }
-            .flatMap { _ -> Observable<AppleTokenResponse?> in
-                print("00000")
-                return AuthorizationService.shared.decodedData }
-            .map { ($0?.refresh_token ?? "") as String }
-            .flatMap { refreshToken -> Observable<(String, String)> in
-                print("11111")
-                return Observable.just( (AuthorizationService.shared.createJWT(), refreshToken) ) }
-            .map { AuthorizationService.shared.revokeAppleToken(clientSecret: $0.0, token: $0.1) }
-            .flatMap { _ -> Observable<Bool> in
-                print("22222")
-                return AuthorizationService.shared.isAppleTokenRevoked }
-            .distinctUntilChanged()
-            .flatMap { _ -> Observable<Bool> in
-                print("33333")
-                return AuthorizationService.shared.isAppleTokenRevoked
+        // ⭐️ Each step waits for the completion of the previous step before executing.
+        // ⭐️ "flatMap" does not guarantee the order of event emission from the sequence,
+        //    whereas "concatMap" ensures the order of event emission.
+        self.withdrawalButton.rx.tap.asObservable()  // tap event -> Observable<Void>
+        
+        // Step 1: Request authorization.
+            .concatMap { _ -> Observable<Void> in
+                return Observable.create { observer in
+                    self.requestAuthorization()
+                    observer.onNext(())
+                    observer.onCompleted()
+                    return Disposables.create()
+                }  // Observable<Void> -> Observable<Void>
             }
-            .filter { $0 == true }
+
+        // Step 2: Get Apple refresh token.
+            .concatMap { _ -> Observable<String> in
+                return self.authorizationCode.asObservable()  // Observable<String>
+                    .filter { !$0.isEmpty }  // Observable<String> -> Observable<String>
+                    .flatMap { authorizationCode -> Observable<String> in
+                        return AuthorizationService.shared.getAppleRefreshToken(code: authorizationCode)
+                    }  // Observable<String> -> Observable<String>
+            }
+        
+        // Step 3: ...
+            .concatMap { clientSecret -> Observable<Void> in
+                let clientSecret = Observable.just(clientSecret)  // Observable<String>
+                let refreshToken = AuthorizationService.shared.decodedData.asObservable()  // Observable<AppleTokenResponse?>
+                    .flatMap { decoddedData -> Observable<String> in
+                        return Observable.just((decoddedData?.refresh_token ?? "") as String)
+                    }  // Observable<String> -> Observable<String>
+                
+                return Observable
+                    .zip(clientSecret, refreshToken)  // Observable<String>, Observable<String> -> Observable<String>, Observable<String>
+                    .map { AuthorizationService.shared.revokeAppleToken(clientSecret: $0, token: $1) }  // Observable<String>, Observable<String> -> Observable<Void>
+            }
+        
+        // Step 4: ...
+            .concatMap { _ -> Observable<Void> in
+                return AuthorizationService.shared.isAppleTokenRevoked.asObservable()  // Observable<Bool>
+                    .filter { $0 == true }  // Observable<Bool> -> Observable<Bool>
+                    .flatMap { _ -> Observable<Void> in
+                        return Observable.create { observer in
+                            observer.onNext(())
+                            observer.onCompleted()
+                            return Disposables.create()
+                        }
+                    }  // Observable<Bool> -> Observable<Void>
+            }
+        
+        // Step 5: ...
             .delay(.milliseconds(500), scheduler: MainScheduler.instance)
             .observe(on: MainScheduler.instance)
-            .subscribe(onNext: { [weak self] _ in
-                guard let self = self else { return }
+            .subscribe(onNext: {
                 self.activityIndicator.stopAnimating()
                 self.goToLoginViewController()
+                print("Memberwhip withdrawal completed!")
             })
             .disposed(by: rx.disposeBag)
     }

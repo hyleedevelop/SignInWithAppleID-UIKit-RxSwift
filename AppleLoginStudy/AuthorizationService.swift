@@ -17,8 +17,8 @@ final class AuthorizationService {
     static let shared = AuthorizationService()
     private init() {}
     
-    let decodedData = BehaviorSubject<AppleTokenResponse?>(value: nil)
-    let isAppleTokenRevoked = BehaviorSubject<Bool>(value: false)
+    let decodedData = PublishSubject<AppleTokenResponse?>()
+    let isAppleTokenRevoked = PublishSubject<Bool>()
     
     var currentNonce: String?
     
@@ -109,7 +109,8 @@ final class AuthorizationService {
     }
     
     // Create JWT(JSON Web Token) string.
-    func createJWT() -> String {
+    @discardableResult
+    func createJWT() -> Observable<String> {
         let myHeader = Header(kid: Constant.Authorization.appleKeyID)  // ⭐️ write your own apple key ID (xxxxxxxxxx)
         struct MyClaims: Claims {
             let iss: String
@@ -132,24 +133,28 @@ final class AuthorizationService {
         var myJWT = JWT(header: myHeader, claims: myClaims)
         
         // JWT 발급을 요청값의 암호화 과정에서 다운받아두었던 Key File(.p8 파일)이 필요함
-        guard let url = Bundle.main.url(forResource: Constant.Authorization.keyFileName, withExtension: "p8") else { return "" }  // ⭐️ write your own key file name (AuthKey_xxxxxxxxxx)
+        guard let url = Bundle.main.url(forResource: Constant.Authorization.keyFileName, withExtension: "p8") else { return Observable.just("") }  // ⭐️ write your own key file name (AuthKey_xxxxxxxxxx)
         let privateKey: Data = try! Data(contentsOf: url, options: .alwaysMapped)
         
         let jwtSigner = JWTSigner.es256(privateKey: privateKey)
         let signedJWT = try! myJWT.sign(using: jwtSigner)
         
-        UserDefaults.standard.set(signedJWT, forKey: Constant.UserDefaults.clientSecret)
+        print(#function, (UserDefaults.standard.value(forKey: Constant.UserDefaults.clientSecret) ?? "") as! String)
+        UserDefaults.standard.setValue(signedJWT, forKey: Constant.UserDefaults.clientSecret)
         
         print("🗝 signedJWT - \(signedJWT)")
-        return signedJWT
+        //return signedJWT
+        return Observable.just(signedJWT)
     }
     
     //MARK: - Method for membership withdrawal
     
     // 1. Apple Refresh Token 받기
     //func getAppleRefreshToken(code: String, completion: @escaping (AppleTokenResponse) -> Void) {
-    func getAppleRefreshToken(code: String) {
-        guard let secret = UserDefaults.standard.string(forKey: Constant.UserDefaults.clientSecret) else { return }
+    func getAppleRefreshToken(code: String) -> Observable<String> {
+        guard let secret = UserDefaults.standard.string(forKey: Constant.UserDefaults.clientSecret) else {
+            return Observable.just("")
+        }  // << 앱 설치 후 최초 회원탈퇴 시도하면 return 되어버림... 왜?
         
         let url = "https://appleid.apple.com/auth/token?" +
                   "client_id=\(Constant.App.appBundleID)&" +
@@ -183,6 +188,8 @@ final class AuthorizationService {
                 print("Failed to withdraw from membership: \(response.error.debugDescription)")
             }
         }
+        
+        return Observable.just(secret)
     }
     
     // 2. Apple Token 삭제
