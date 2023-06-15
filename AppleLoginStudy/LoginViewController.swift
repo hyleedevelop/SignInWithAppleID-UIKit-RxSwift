@@ -38,7 +38,8 @@ final class LoginViewController: UIViewController {
     //MARK: - Main process
     
     private func setupButton() {
-        // Set corner radius of the button.
+        // Set corner radius of the view.
+        // (we call it as "button", but it is basically UIView)
         self.signInButton.layer.cornerRadius = 5
         self.signInButton.clipsToBounds = true
         
@@ -47,40 +48,47 @@ final class LoginViewController: UIViewController {
     
     private func setupSignInProcess() {
         /*
-         (1) Since signInButton is not a button, but a view, it needs tapGesture to act like a button.
-         (2) It is required because the event is automatically emitted when binding.
-         (3) This emits an observable of false.
-         (4) Wait until the element is changed. Current element is false.
-         (5) When the authorization has completed, true is emitted.
-             In other words, element has been changed and continue returning an observable of true.
-         (6) Check whether the element is true or not.
-         (7) If sign-in is allowed, wait for 0.5 seconds. (this code is optional)
-         (8) Make sure that main scheduler is required for UI updates.
-         (9) Stop activity indicator and go to the HomeViewController.
+         ------------------------------------------------------------------------------------------
+         ✅ Since signInButton is not a button, but a view, it needs tapGesture to act like a button.
+         ✅ "when" operator is required as the event is automatically emitted at the time of binding.
+         ------------------------------------------------------------------------------------------
          */
         
-        self.signInButton.rx.tapGesture()                                  // (1)
-            .when(.recognized)                                             // (2)
-//            .observe(on: ConcurrentDispatchQueueScheduler(qos: .default))
-            .flatMap { _ in self.requestAuthorization() }                  // (3)
-            .distinctUntilChanged()                                        // (4)
-            .flatMap { _ in self.isSignInAllowed }                         // (5)
-            .filter { $0 == true }                                         // (6)
-            .delay(.milliseconds(500), scheduler: MainScheduler.instance)  // (7)
-            .observe(on: MainScheduler.instance)                         // (8)
-            .subscribe(onNext: { [weak self] _ in                          // (9)
+        // When the button is tapped, start observable sequence.
+        self.signInButton.rx.tapGesture()  // ControlEvent
+            .when(.recognized)  // ControlEvent -> Observable<ControlEvent>
+        
+        // Step 1: Request authorization to API server.
+            .map { Void in
+                print("\(#function): Step 1")
+                self.requestAuthorization()
+            }  // Observable<ControlEvent> -> Observable<Void>
+        
+        // Step 2: If step 1 has successfully done and "true" event is emitted, go to the next step.
+            .concatMap { Void -> Observable<Bool> in
+                print("\(#function): Step 2")
+                return self.isSignInAllowed.asObservable()
+            }  // Observable<Void> -> Observable<Bool>
+            .filter { $0 == true }  // Observable<Bool> -> Observable<Bool>
+        
+        // Step 3: Show the animating activity indicator to the user and go to the HomeViewController.
+            .delay(.milliseconds(500), scheduler: MainScheduler.instance)
+            .observe(on: MainScheduler.instance)
+            .subscribe(onNext: { [weak self] _ in
                 guard let self = self else { return }
-                print("Login Completed!")
+                print("\(#function): Step 3")
                 self.activityIndicator.stopAnimating()
                 self.goToHomeViewController()
+                print("Sign-in Completed!")
             })
             .disposed(by: rx.disposeBag)
+
     }
 
     //MARK: - Method used in the main process
     
-    // Request authorization for sign-in(or sign-up).
-    private func requestAuthorization() -> Observable<Bool> {
+    // Request authorization for sign-in or sign-up.
+    private func requestAuthorization() {
         // 1. Create an instance of ASAuthorizationAppleIDRequest.
         let request = AuthorizationService.shared.appleIDRequest
         
@@ -91,8 +99,6 @@ final class LoginViewController: UIViewController {
         
         // 3. Present the sign-in(or sign-up) view.
         authorizationController.performRequests()
-        
-        return Observable.just(false)
     }
     
     // If login process has successfully done, let's go to the HomeViewController
@@ -114,17 +120,16 @@ extension LoginViewController: ASAuthorizationControllerDelegate {
             self.activityIndicator.startAnimating()
         }
         
-        // 1. 사용자의 정보 가져오기
+        // 📌 Step 1: After success of authorization, retrieve user information from Apple ID Server.
+        // (https://developer.apple.com/documentation/sign_in_with_apple/sign_in_with_apple_rest_api/authenticating_users_with_sign_in_with_apple#3383773)
         
-        // authorization: controller로부터 받은 인증 성공 정보에 대한 캡슐화된 객체
-        var userIdentifier: String = ""
-        
-        // 인증 성공 이후 제공되는 정보
+        // "appleIdCredential" contains user information.
         guard let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential else { return }
-        // (1) 사용자에 대한 고유 식별자 (항상 변하지 않는 값)
-        userIdentifier = appleIDCredential.user
         
-        // (2) 사용자의 이름
+        // Info #1: Identifier (unique to the user and never changing)
+        let userIdentifier = appleIDCredential.user
+        
+        // Info #2: Name
         if let fullName = appleIDCredential.fullName {
             if let givenName = fullName.givenName,
                let familyName = fullName.familyName {
@@ -133,12 +138,10 @@ extension LoginViewController: ASAuthorizationControllerDelegate {
             }
         }
         
-        // (3) 사용자의 이메일
-        // (3-1) 최초로 이메일 가져오기
+        // Info #3: Email
         if let userEmail = appleIDCredential.email {
             UserDefaults.standard.setValue(userEmail, forKey: Constant.UserDefaults.userEmail)
             print("user email: \(userEmail)")
-            // (3-2) 두번째 부터 이메일 가져오는 방법
         } else {
             // credential.identityToken은 jwt로 되어있고, 해당 토큰을 decode 후 email에 접근해야함
             guard let tokenString = String(data: appleIDCredential.identityToken ?? Data(), encoding: .utf8) else { return }
@@ -146,25 +149,25 @@ extension LoginViewController: ASAuthorizationControllerDelegate {
             print("user email: \(userEmail)")
         }
         
-        // ⭐️ The authorizationCode is one-time use and only valid for 5 minutes after authentication
+        // ⭐️ The authorization code is disposable and valid for only 5 minutes after authentication.
         if let authorizationCode = appleIDCredential.authorizationCode,
            let identityToken = appleIDCredential.identityToken,
            let authCodeString = String(data: authorizationCode, encoding: .utf8),
            let identifyTokenString = String(data: identityToken, encoding: .utf8) {
-            let code = String(decoding: authorizationCode, as: UTF8.self)
-            print(authorizationCode)
-            print(identityToken)
-            print(authCodeString)
-            print(identifyTokenString)
+            print("🗝 authrizationCode - \(authCodeString)")
+            print("🗝 identifyToken - \(identifyTokenString)")
         }
         
-        // 2. 사용자의 식별자를 이용해 경우에 따른 로그인 처리
+        // 📌 Step 2: Returns the credential state for the given user to handle in a completion handler.
+        // (https://developer.apple.com/documentation/sign_in_with_apple/sign_in_with_apple_rest_api/verifying_a_user#3383776)
         ASAuthorizationAppleIDProvider()
             .getCredentialState(forUserID: userIdentifier) { credentialState, error in
                 switch credentialState {
                 case .authorized:
-                    AuthorizationService.shared.createJWT()  // Save client secret (JWT) in UserDefaults.
-                    self.isSignInAllowed.onNext(true)  // If sign-in is allowed, emit true element.
+                    // Create and save client secret (JWT) in UserDefaults for later token revocation.
+                    AuthorizationService.shared.createJWT()
+                    // If sign-in is allowed, emit true element.
+                    self.isSignInAllowed.onNext(true)
                     print("credentialState: authorized")
                     
                 case .revoked:

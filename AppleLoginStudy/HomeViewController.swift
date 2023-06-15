@@ -33,7 +33,6 @@ final class HomeViewController: UIViewController {
         let emailString = "(\(email))"
         return Observable.just(emailString)
     }
-    private let isWithdrawalAllowed = PublishSubject<Bool>()
     private let authorizationCode = PublishSubject<String>()
     
     //MARK: - Life cycle
@@ -74,26 +73,24 @@ final class HomeViewController: UIViewController {
          ------------------------------------------------------------------------------------------
          ✅ Each step waits for the completion of the previous step before executing.
          ✅ "flatMap" does not guarantee the order of event emission from the sequence,
-             whereas "concatMap" ensures the order of event emission.
+             whereas "concatMap" ensures the order of event emission as it does not allow interleaving.
          ✅ In this code, "concatMap" is used to chain observables sequentially.
          ------------------------------------------------------------------------------------------
          */
-         
+
+        // When the button is tapped, start observable sequence.
         self.withdrawalButton.rx.tap.asObservable()  // tap event -> Observable<Void>
-        
+            
         // Step 1: Request authorization to API server.
-            .concatMap { Void -> Observable<Void> in
-                return Observable.create { observer in
-                    self.requestAuthorization()
-                    observer.onNext(())
-                    observer.onCompleted()
-                    return Disposables.create()
-                }  // Observable<Void> -> Observable<Void>
+            .map { Void in
+                print("\(#function): Step 1")
+                self.requestAuthorization()
             }
 
         // Step 2: If step 1 has successfully done, we can get the authorization code,
         //         which is then used to call the method for obtaining the Apple refresh token.
             .concatMap { Void -> Observable<String> in
+                print("\(#function): Step 2")
                 return self.authorizationCode.asObservable()  // Observable<String>
                     .filter { !$0.isEmpty }  // Observable<String> -> Observable<String>
                     .flatMap { authorizationCode -> Observable<String> in
@@ -105,34 +102,31 @@ final class HomeViewController: UIViewController {
         //         Then, we need to decode it to get Apple refresh token which is necessary for revoking the Apple token.
         //         If both client secret and refresh token are ready, we will request revocation of the token.
             .concatMap { clientSecret -> Observable<Void> in
-                let clientSecret = Observable.just(clientSecret)  // Observable<String>
+                print("\(#function): Step 3")
+                let clientSecret = Observable.just(clientSecret)  // Observable<String> (rapidly processed)
                 let refreshToken = AuthorizationService.shared.decodedData.asObservable()
                     .flatMap { decoddedData -> Observable<String> in
                         return Observable.just((decoddedData?.refresh_token ?? "") as String)
-                    }  // Observable<AppleTokenResponse?> -> Observable<String>
+                    }  // Observable<AppleTokenResponse?> -> Observable<String> (slowly processed)
                 
                 return Observable
-                    .zip(clientSecret, refreshToken)  // Observable<String>, Observable<String> -> Observable<String>, Observable<String>
+                    .combineLatest(clientSecret, refreshToken)  // Observable<String>, Observable<String> -> Observable<String>, Observable<String>
                     .map { AuthorizationService.shared.revokeAppleToken(clientSecret: $0, token: $1) }  // Observable<String>, Observable<String> -> Observable<Void>
-            }
+            }  // Observable<String> -> Observable<Void>
         
-        // Step 4: If step 3 has successfully done, let's go to step 5.
-            .concatMap { Void -> Observable<Void> in
+        // Step 4: If step 3 has successfully done and get "true" element, go to the next step.
+            .concatMap { Void -> Observable<Bool> in
+                print("\(#function): Step 4")
                 return AuthorizationService.shared.isAppleTokenRevoked.asObservable()  // Observable<Bool>
-                    .filter { $0 == true }  // Observable<Bool> -> Observable<Bool>
-                    .flatMap { _ -> Observable<Void> in
-                        return Observable.create { observer in
-                            observer.onNext(())
-                            observer.onCompleted()
-                            return Disposables.create()
-                        }
-                    }  // Observable<Bool> -> Observable<Void>
-            }
-        
+            }  // 
+            .filter { $0 == true }  // Observable<Bool> -> Observable<Bool>
+            
         // Step 5: Show the animating activity indicator to the user and go back to the LoginViewController.
             .delay(.milliseconds(500), scheduler: MainScheduler.instance)
             .observe(on: MainScheduler.instance)
-            .subscribe(onNext: {
+            .subscribe(onNext: { [weak self] _ in
+                guard let self = self else { return }
+                print("\(#function): Step 5")
                 self.activityIndicator.stopAnimating()
                 self.goToLoginViewController()
                 print("Membership withdrawal completed!")
@@ -143,9 +137,9 @@ final class HomeViewController: UIViewController {
 
     //MARK: - Method used in the main process
     
-    // Request authorization for sign-in(or sign-up).
-    @discardableResult
-    private func requestAuthorization() -> Observable<String> {
+    // Request authorization for sign-in.
+    //
+    private func requestAuthorization() {
         // 1. Create an instance of ASAuthorizationAppleIDRequest.
         let request = AuthorizationService.shared.appleIDRequest
         
@@ -156,8 +150,6 @@ final class HomeViewController: UIViewController {
         
         // 3. Present the sign-in(or sign-up) view.
         authorizationController.performRequests()
-        
-        return Observable.just("")
     }
     
     // If login process has successfully done, let's go to the HomeViewController.

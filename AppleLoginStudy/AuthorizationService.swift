@@ -139,18 +139,15 @@ final class AuthorizationService {
         let jwtSigner = JWTSigner.es256(privateKey: privateKey)
         let signedJWT = try! myJWT.sign(using: jwtSigner)
         
-        print(#function, (UserDefaults.standard.value(forKey: Constant.UserDefaults.clientSecret) ?? "") as! String)
         UserDefaults.standard.setValue(signedJWT, forKey: Constant.UserDefaults.clientSecret)
         
         print("🗝 signedJWT - \(signedJWT)")
-        //return signedJWT
         return Observable.just(signedJWT)
     }
     
     //MARK: - Method for membership withdrawal
     
-    // 1. Apple Refresh Token 받기
-    //func getAppleRefreshToken(code: String, completion: @escaping (AppleTokenResponse) -> Void) {
+    // 1. Receive Apple refresh token.
     func getAppleRefreshToken(code: String) -> Observable<String> {
         guard let secret = UserDefaults.standard.string(forKey: Constant.UserDefaults.clientSecret) else {
             return Observable.just("")
@@ -164,7 +161,7 @@ final class AuthorizationService {
         let header: HTTPHeaders = ["Content-Type": "application/x-www-form-urlencoded"]
         
         print("🗝 clientSecret - \(secret)")
-        print("🗝 authCode - \(code)")
+        print("🗝 authorizationCode - \(code)")
         
         AF.request(url,
                    method: .post,
@@ -178,8 +175,6 @@ final class AuthorizationService {
                     if decodedData.refresh_token == nil{
                         print("Failed to withdraw from membership.")
                     } else {
-                        //completion(decodedData)
-                        print("decodedData.refresh_token: \(decodedData.refresh_token ?? "no refresh token")")
                         self.decodedData.onNext(decodedData)
                     }
                 }
@@ -192,8 +187,7 @@ final class AuthorizationService {
         return Observable.just(secret)
     }
     
-    // 2. Apple Token 삭제
-    //func revokeAppleToken(clientSecret: String, token: String, completion: @escaping () -> Void) {
+    // 2. Revoke Apple token.
     func revokeAppleToken(clientSecret: String, token: String) {
         let url = "https://appleid.apple.com/auth/revoke?" +
                   "client_id=\(Constant.App.appBundleID)&" +
