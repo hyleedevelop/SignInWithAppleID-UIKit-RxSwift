@@ -71,15 +71,6 @@ final class HomeViewController: UIViewController {
     
     // This is a method implemented using RxSwift to handle the membership withdrawal process.
     private func setupMembershipWithdrawalProcess() {
-        /*
-         ------------------------------------------------------------------------------------------
-         ✅ Each step waits for the completion of the previous step before executing.
-         ✅ "flatMap" does not guarantee the order of event emission from the sequence,
-             whereas "concatMap" ensures the order of event emission as it does not allow interleaving.
-         ✅ In this code, "concatMap" is used to chain observables sequentially.
-         ------------------------------------------------------------------------------------------
-         */
-
         // 📌 Step 1: When the button is tapped, request authorization to API server.
         self.withdrawalButton.rx.tap.asObservable()
             .subscribe { [weak self] _ in
@@ -128,6 +119,7 @@ final class HomeViewController: UIViewController {
                 print("Membership withdrawal completed!")
             })
             .disposed(by: rx.disposeBag)
+        
     }
 
     //MARK: - Child method

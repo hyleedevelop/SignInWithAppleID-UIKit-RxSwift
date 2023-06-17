@@ -116,8 +116,7 @@ final class AuthorizationService {
     }
     
     // Create JWT(JSON Web Token) string.
-    @discardableResult
-    func createJWT() -> Observable<String> {
+    func createJWT() {
         let myHeader = Header(kid: Constant.Authorization.appleKeyID)  // ⭐️ write your own apple key ID (xxxxxxxxxx)
         struct MyClaims: Claims {
             let iss: String
@@ -140,7 +139,7 @@ final class AuthorizationService {
         var myJWT = JWT(header: myHeader, claims: myClaims)
         
         // JWT 발급을 요청값의 암호화 과정에서 다운받아두었던 Key File(.p8 파일)이 필요함
-        guard let url = Bundle.main.url(forResource: Constant.Authorization.keyFileName, withExtension: "p8") else { return Observable.just("") }  // ⭐️ write your own key file name (AuthKey_xxxxxxxxxx)
+        guard let url = Bundle.main.url(forResource: Constant.Authorization.keyFileName, withExtension: "p8") else { return }  // ⭐️ write your own key file name (AuthKey_xxxxxxxxxx)
         let privateKey: Data = try! Data(contentsOf: url, options: .alwaysMapped)
         
         let jwtSigner = JWTSigner.es256(privateKey: privateKey)
@@ -149,7 +148,6 @@ final class AuthorizationService {
         UserDefaults.standard.setValue(signedJWT, forKey: Constant.UserDefaults.clientSecret)
         
         print("🗝 signedJWT - \(signedJWT)")
-        return Observable.just(signedJWT)
     }
     
     //MARK: - Membership withdrawal

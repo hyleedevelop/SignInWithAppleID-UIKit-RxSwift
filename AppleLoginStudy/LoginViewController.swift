@@ -64,7 +64,7 @@ final class LoginViewController: UIViewController {
             })
             .disposed(by: rx.disposeBag)
         
-        // 📌 Step 2: If step 1 has successfully done and "true" event is emitted,
+        // 📌 Step 2: If step 1 has successfully done and "true" is emitted,
         //            display the animating activity indicator to the user and go to the HomeViewController.
         self.isSignInAllowed.asObservable()
             .filter { $0 == true }
@@ -138,7 +138,6 @@ extension LoginViewController: ASAuthorizationControllerDelegate {
             UserDefaults.standard.setValue(userEmail, forKey: Constant.UserDefaults.userEmail)
             print("user email: \(userEmail)")
         } else {
-            // credential.identityToken은 jwt로 되어있고, 해당 토큰을 decode 후 email에 접근해야함
             guard let tokenString = String(data: appleIDCredential.identityToken ?? Data(), encoding: .utf8) else { return }
             let userEmail = AuthorizationService.shared.decode(jwtToken: tokenString)["email"] as? String ?? ""
             print("user email: \(userEmail)")
