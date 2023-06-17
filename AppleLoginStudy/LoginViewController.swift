@@ -7,7 +7,6 @@
 
 import UIKit
 import RxSwift
-import RxCocoa
 import RxGesture
 import NSObject_Rx
 import AuthenticationServices
@@ -24,6 +23,7 @@ final class LoginViewController: UIViewController {
     
     //MARK: - Property
     
+    // Rx
     private let isSignInAllowed = PublishSubject<Bool>()
     
     //MARK: - Life cycle
@@ -35,7 +35,7 @@ final class LoginViewController: UIViewController {
         self.setupSignInProcess()
     }
     
-    //MARK: - Main process
+    //MARK: - Method called by viewDidLoad
     
     private func setupButton() {
         // Set corner radius of the view.
@@ -54,50 +54,45 @@ final class LoginViewController: UIViewController {
          ------------------------------------------------------------------------------------------
          */
         
-        // When the button is tapped, start observable sequence.
-        self.signInButton.rx.tapGesture()  // ControlEvent
-            .when(.recognized)  // ControlEvent -> Observable<ControlEvent>
-        
-        // Step 1: Request authorization to API server.
-            .map { Void in
+        // 📌 Step 1: When the button is tapped, request authorization to API server.
+        self.signInButton.rx.tapGesture()
+            .when(.recognized)
+            .subscribe(onNext: { [weak self] _ in
+                guard let self = self else { return }
                 print("\(#function): Step 1")
                 self.requestAuthorization()
-            }  // Observable<ControlEvent> -> Observable<Void>
+            })
+            .disposed(by: rx.disposeBag)
         
-        // Step 2: If step 1 has successfully done and "true" event is emitted, go to the next step.
-            .concatMap { Void -> Observable<Bool> in
-                print("\(#function): Step 2")
-                return self.isSignInAllowed.asObservable()
-            }  // Observable<Void> -> Observable<Bool>
-            .filter { $0 == true }  // Observable<Bool> -> Observable<Bool>
-        
-        // Step 3: Show the animating activity indicator to the user and go to the HomeViewController.
+        // 📌 Step 2: If step 1 has successfully done and "true" event is emitted,
+        //            display the animating activity indicator to the user and go to the HomeViewController.
+        self.isSignInAllowed.asObservable()
+            .filter { $0 == true }
             .delay(.milliseconds(500), scheduler: MainScheduler.instance)
             .observe(on: MainScheduler.instance)
             .subscribe(onNext: { [weak self] _ in
                 guard let self = self else { return }
-                print("\(#function): Step 3")
+                print("\(#function): Step 2")
                 self.activityIndicator.stopAnimating()
                 self.goToHomeViewController()
                 print("Sign-in Completed!")
             })
             .disposed(by: rx.disposeBag)
-
     }
 
-    //MARK: - Method used in the main process
+    //MARK: - Child method
     
     // Request authorization for sign-in or sign-up.
     private func requestAuthorization() {
-        // 1. Create an instance of ASAuthorizationAppleIDRequest.
+        // Create an instance of ASAuthorizationAppleIDRequest.
         let request = AuthorizationService.shared.appleIDRequest
         
-        // 2. Preparing to display the sign-in view in LoginViewController.
+        // Preparing to display the sign-in view in LoginViewController.
         let authorizationController = ASAuthorizationController(authorizationRequests: [request])
         authorizationController.delegate = self
         authorizationController.presentationContextProvider = self as? ASAuthorizationControllerPresentationContextProviding
         
-        // 3. Present the sign-in(or sign-up) view.
+        // Present the sign-in(or sign-up) view.
         authorizationController.performRequests()
     }
     

@@ -17,11 +17,11 @@ final class AuthorizationService {
     static let shared = AuthorizationService()
     private init() {}
     
-    let decodedData = PublishSubject<AppleTokenResponse?>()
-    let isAppleTokenRevoked = PublishSubject<Bool>()
+    //MARK: - Sign in with Apple ID
     
     var currentNonce: String?
     
+    // Request.
     var appleIDRequest: ASAuthorizationAppleIDRequest {
         let appleIDProvider = ASAuthorizationAppleIDProvider()
         let request = appleIDProvider.createRequest()
@@ -32,36 +32,6 @@ final class AuthorizationService {
         self.currentNonce = nonce
         
         return request
-    }
-    
-    func decode(jwtToken jwt: String) -> [String: Any] {
-        let segments = jwt.components(separatedBy: ".")
-        return decodeJWTPart(segments[1]) ?? [:]
-    }
-    
-    func decodeJWTPart(_ value: String) -> [String: Any]? {
-        guard let bodyData = base64UrlDecode(value),
-              let json = try? JSONSerialization.jsonObject(with: bodyData, options: []),
-              let payload = json as? [String: Any] else {
-            return nil
-        }
-        
-        return payload
-    }
-    
-    func base64UrlDecode(_ value: String) -> Data? {
-        var base64 = value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        
-        let length = Double(base64.lengthOfBytes(using: String.Encoding.utf8))
-        let requiredLength = 4 * ceil(length / 4.0)
-        let paddingLength = requiredLength - length
-        if paddingLength > 0 {
-            let padding = "".padding(toLength: Int(paddingLength), withPad: "=", startingAt: 0)
-            base64 = base64 + padding
-        }
-        return Data(base64Encoded: base64, options: .ignoreUnknownCharacters)
     }
     
     // Create random nonce string.
@@ -108,6 +78,43 @@ final class AuthorizationService {
         return hashString
     }
     
+    //MARK: - JWT decoding
+    
+    // Rx
+    let decodedData = PublishSubject<AppleTokenResponse?>()
+    
+    // Decode JWT (1).
+    func decode(jwtToken jwt: String) -> [String: Any] {
+        let segments = jwt.components(separatedBy: ".")
+        return decodeJWTPart(segments[1]) ?? [:]
+    }
+    
+    // Decode JWT (2).
+    func decodeJWTPart(_ value: String) -> [String: Any]? {
+        guard let bodyData = base64UrlDecode(value),
+              let json = try? JSONSerialization.jsonObject(with: bodyData, options: []),
+              let payload = json as? [String: Any] else {
+            return nil
+        }
+        
+        return payload
+    }
+    
+    func base64UrlDecode(_ value: String) -> Data? {
+        var base64 = value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        
+        let length = Double(base64.lengthOfBytes(using: String.Encoding.utf8))
+        let requiredLength = 4 * ceil(length / 4.0)
+        let paddingLength = requiredLength - length
+        if paddingLength > 0 {
+            let padding = "".padding(toLength: Int(paddingLength), withPad: "=", startingAt: 0)
+            base64 = base64 + padding
+        }
+        return Data(base64Encoded: base64, options: .ignoreUnknownCharacters)
+    }
+    
     // Create JWT(JSON Web Token) string.
     @discardableResult
     func createJWT() -> Observable<String> {
@@ -145,13 +152,14 @@ final class AuthorizationService {
         return Observable.just(signedJWT)
     }
     
-    //MARK: - Method for membership withdrawal
+    //MARK: - Membership withdrawal
     
-    // 1. Receive Apple refresh token.
-    func getAppleRefreshToken(code: String) -> Observable<String> {
-        guard let secret = UserDefaults.standard.string(forKey: Constant.UserDefaults.clientSecret) else {
-            return Observable.just("")
-        }
+    // Rx
+    let isAppleTokenRevoked = PublishSubject<Bool>()
+    
+    // Receive Apple refresh token.
+    func getAppleRefreshToken(code: String) {
+        guard let secret = UserDefaults.standard.string(forKey: Constant.UserDefaults.clientSecret) else { return }
         
         let url = "https://appleid.apple.com/auth/token?" +
                   "client_id=\(Constant.App.appBundleID)&" +
@@ -183,11 +191,9 @@ final class AuthorizationService {
                 print("Failed to withdraw from membership: \(response.error.debugDescription)")
             }
         }
-        
-        return Observable.just(secret)
     }
     
-    // 2. Revoke Apple token.
+    // Revoke Apple refresh token.
     func revokeAppleToken(clientSecret: String, token: String) {
         let url = "https://appleid.apple.com/auth/revoke?" +
                   "client_id=\(Constant.App.appBundleID)&" +

@@ -10,7 +10,6 @@ import RxSwift
 import RxCocoa
 import NSObject_Rx
 import AuthenticationServices
-import Alamofire
 
 final class HomeViewController: UIViewController {
 
@@ -23,6 +22,7 @@ final class HomeViewController: UIViewController {
     
     //MARK: - Property
     
+    // UI binding
     private var userName: Observable<String> {
         let name = UserDefaults.standard.string(forKey: Constant.UserDefaults.userName) ?? "?"
         let nameString = "\(name)"
@@ -33,6 +33,8 @@ final class HomeViewController: UIViewController {
         let emailString = "(\(email))"
         return Observable.just(emailString)
     }
+    
+    // Rx
     private let authorizationCode = PublishSubject<String>()
     
     //MARK: - Life cycle
@@ -45,7 +47,7 @@ final class HomeViewController: UIViewController {
         self.setupMembershipWithdrawalProcess()
     }
     
-    //MARK: - Method used in the main process
+    //MARK: - Method called by viewDidLoad
     
     private func setupLabel() {
         // Bind user name.
@@ -78,77 +80,69 @@ final class HomeViewController: UIViewController {
          ------------------------------------------------------------------------------------------
          */
 
-        // When the button is tapped, start observable sequence.
-        self.withdrawalButton.rx.tap.asObservable()  // tap event -> Observable<Void>
-            
-        // Step 1: Request authorization to API server.
-            .map { Void in
+        // 📌 Step 1: When the button is tapped, request authorization to API server.
+        self.withdrawalButton.rx.tap.asObservable()
+            .subscribe { [weak self] _ in
+                guard let self = self else { return }
                 print("\(#function): Step 1")
                 self.requestAuthorization()
             }
+            .disposed(by: rx.disposeBag)
 
-        // Step 2: If step 1 has successfully done, we can get the authorization code,
-        //         which is then used to call the method for obtaining the Apple refresh token.
-            .concatMap { Void -> Observable<String> in
+        // 📌 Step 2: If the user is authorizaed, proceed to get Apple refresh token with authorization code.
+        self.authorizationCode.asObservable()
+            .filter { !$0.isEmpty }
+            .subscribe(onNext: {
                 print("\(#function): Step 2")
-                return self.authorizationCode.asObservable()  // Observable<String>
-                    .filter { !$0.isEmpty }  // Observable<String> -> Observable<String>
-                    .flatMap { authorizationCode -> Observable<String> in
-                        return AuthorizationService.shared.getAppleRefreshToken(code: authorizationCode)
-                    }  // Observable<String> -> Observable<String>
-            }
+                AuthorizationService.shared.getAppleRefreshToken(code: $0)
+            })
+            .disposed(by: rx.disposeBag)
+
+        // 📌 Step 3: If Step 2 has successfully done, we receive some response data from Apple ID server.
+        //            Then, we need to decode it to get Apple refresh token which is necessary for revoking the Apple token.
+        //            If both client secret and refresh token are ready, we will request revocation of the token.
+        let clientSecret = Observable
+            .just(UserDefaults.standard.string(forKey: Constant.UserDefaults.clientSecret) ?? "")
+        let refreshToken = AuthorizationService.shared.decodedData.asObservable()
+            .map { ($0?.refresh_token ?? "") as String }
         
-        // Step 3: If step 2 has successfully done, we receive some response data from Apple ID server.
-        //         Then, we need to decode it to get Apple refresh token which is necessary for revoking the Apple token.
-        //         If both client secret and refresh token are ready, we will request revocation of the token.
-            .concatMap { clientSecret -> Observable<Void> in
+        Observable
+            .combineLatest(clientSecret, refreshToken)
+            .subscribe(onNext: {
                 print("\(#function): Step 3")
-                let clientSecret = Observable.just(clientSecret)  // Observable<String> (rapidly processed)
-                let refreshToken = AuthorizationService.shared.decodedData.asObservable()
-                    .flatMap { decoddedData -> Observable<String> in
-                        return Observable.just((decoddedData?.refresh_token ?? "") as String)
-                    }  // Observable<AppleTokenResponse?> -> Observable<String> (slowly processed)
-                
-                return Observable
-                    .combineLatest(clientSecret, refreshToken)  // Observable<String>, Observable<String> -> Observable<String>, Observable<String>
-                    .map { AuthorizationService.shared.revokeAppleToken(clientSecret: $0, token: $1) }  // Observable<String>, Observable<String> -> Observable<Void>
-            }  // Observable<String> -> Observable<Void>
+                AuthorizationService.shared.revokeAppleToken(clientSecret: $0, token: $1)
+            })
+            .disposed(by: rx.disposeBag)
         
-        // Step 4: If step 3 has successfully done and get "true" element, go to the next step.
-            .concatMap { Void -> Observable<Bool> in
-                print("\(#function): Step 4")
-                return AuthorizationService.shared.isAppleTokenRevoked.asObservable()  // Observable<Bool>
-            }  // 
-            .filter { $0 == true }  // Observable<Bool> -> Observable<Bool>
-            
-        // Step 5: Show the animating activity indicator to the user and go back to the LoginViewController.
+        // 📌 Step 4: If Apple refresh token has successfully revoked,
+        //            display the animating activity indicator and go back to the LoginViewController.
+        AuthorizationService.shared.isAppleTokenRevoked.asObservable()
+            .filter { $0 == true }
             .delay(.milliseconds(500), scheduler: MainScheduler.instance)
             .observe(on: MainScheduler.instance)
             .subscribe(onNext: { [weak self] _ in
                 guard let self = self else { return }
-                print("\(#function): Step 5")
+                print("\(#function): Step 4")
                 self.activityIndicator.stopAnimating()
                 self.goToLoginViewController()
                 print("Membership withdrawal completed!")
             })
             .disposed(by: rx.disposeBag)
-        
     }
 
-    //MARK: - Method used in the main process
+    //MARK: - Child method
     
     // Request authorization for sign-in.
-    //
     private func requestAuthorization() {
-        // 1. Create an instance of ASAuthorizationAppleIDRequest.
+        // Create an instance of ASAuthorizationAppleIDRequest.
         let request = AuthorizationService.shared.appleIDRequest
         
-        // 2. Preparing to display the sign-in view in LoginViewController.
+        // Preparing to display the sign-in view in LoginViewController.
         let authorizationController = ASAuthorizationController(authorizationRequests: [request])
         authorizationController.delegate = self
         authorizationController.presentationContextProvider = self as? ASAuthorizationControllerPresentationContextProviding
         
-        // 3. Present the sign-in(or sign-up) view.
+        // Present the sign-in(or sign-up) view.
         authorizationController.performRequests()
     }
     
